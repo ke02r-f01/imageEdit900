@@ -1,0 +1,6 @@
+{
+  "name": "Mobile Image Canvas",
+  "description": "A touch-friendly image editing application designed for smartphones with a 900x900 transparent canvas.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
