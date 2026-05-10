@@ -346,6 +346,45 @@ export default function App() {
     }
   };
 
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      Array.from(e.dataTransfer.files).forEach((file) => {
+        if (file.type.startsWith("image/")) {
+          const url = URL.createObjectURL(file);
+          const newImage: ImageNode = {
+            id: uuidv4(),
+            url,
+            x: LOGICAL_SIZE / 2,
+            y: LOGICAL_SIZE / 2,
+            rotation: 0,
+            scaleX: 1,
+            scaleY: 1,
+          };
+          setImages((prev) => {
+            const next = [...prev, newImage];
+            setSelectedId(newImage.id);
+            return next;
+          });
+        }
+      });
+    }
+  };
+
   const handleDelete = () => {
     if (selectedId) {
       setImages((prev) => prev.filter((img) => img.id !== selectedId));
@@ -405,7 +444,22 @@ export default function App() {
       </header>
 
       {/* Main Workspace */}
-      <main className="flex-grow flex overflow-hidden relative flex-col items-center justify-center bg-gray-100 p-4">
+      <main
+        className={`flex-grow flex overflow-hidden relative flex-col items-center justify-center bg-gray-100 p-4 transition-colors ${isDragging ? "bg-blue-50" : ""}`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {isDragging && (
+          <div className="absolute inset-0 z-50 bg-blue-500/20 flex items-center justify-center pointer-events-none">
+            <div className="bg-white px-6 py-4 rounded-xl shadow-xl flex items-center gap-3">
+              <Plus className="w-8 h-8 text-blue-600" />
+              <span className="text-lg font-bold text-gray-800">
+                Drop images here
+              </span>
+            </div>
+          </div>
+        )}
         {/* Abstract Responsive Wrapper */}
         <div className="w-full max-w-md aspect-square relative shadow-lg flex items-center justify-center border border-gray-200">
           {/* Canvas Container with Checkerboard for transparency indication */}
@@ -676,7 +730,6 @@ export default function App() {
         type="file"
         ref={cameraInputRef}
         accept="image/*"
-        capture="environment"
         className="hidden"
         onChange={handleFileUpload}
       />
@@ -701,10 +754,10 @@ export default function App() {
             className="flex flex-col items-center justify-center gap-1.5 group w-[60px]"
           >
             <div className="p-3 bg-gray-50 text-blue-600 rounded-xl shadow-inner group-hover:bg-gray-100 transition-colors border border-gray-200">
-              <Camera className="w-6 h-6" />
+              <ImageIcon className="w-6 h-6" />
             </div>
             <span className="text-[9px] font-bold tracking-wider uppercase text-gray-500 group-hover:text-blue-600 transition-colors truncate w-full text-center">
-              Camera
+              Image
             </span>
           </button>
 
