@@ -19,6 +19,9 @@ import {
   RotateCcw,
   RotateCw,
   Camera,
+  MoveHorizontal,
+  MoveVertical,
+  Maximize,
 } from "lucide-react";
 
 const LOGICAL_SIZE = 900;
@@ -28,6 +31,13 @@ interface ImageNode {
   url: string;
   x: number;
   y: number;
+  cgX?: number; // center of gravity X (unscaled)
+  cgY?: number; // center of gravity Y (unscaled)
+  contentMinX?: number;
+  contentMaxX?: number;
+  contentMinY?: number;
+  contentMaxY?: number;
+  nonTransparentArea?: number;
   width?: number; // optionally override
   height?: number;
   rotation: number;
@@ -83,6 +93,130 @@ const LongPressButton = ({ onClick, children, className, disabled }: any) => {
   );
 };
 
+function computeImageMetrics(img: HTMLImageElement): {
+  cgX: number;
+  cgY: number;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  nonTransparentPixels: number;
+} {
+  const canvas = document.createElement("canvas");
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx)
+    return {
+      cgX: img.width / 2,
+      cgY: img.height / 2,
+      minX: 0,
+      maxX: img.width,
+      minY: 0,
+      maxY: img.height,
+      nonTransparentPixels: 0,
+    };
+
+  ctx.drawImage(img, 0, 0);
+  const imageData = ctx.getImageData(0, 0, img.width, img.height);
+  const data = imageData.data;
+
+  let sumX = 0;
+  let sumY = 0;
+  let sumAlpha = 0;
+  let nonTransparentPixels = 0;
+
+  let minX = img.width;
+  let maxX = 0;
+  let minY = img.height;
+  let maxY = 0;
+
+  for (let y = 0; y < img.height; y++) {
+    for (let x = 0; x < img.width; x++) {
+      const idx = (y * img.width + x) * 4;
+      const alpha = data[idx + 3]; // alpha is 0-255
+      if (alpha > 0) {
+        sumX += x * alpha;
+        sumY += y * alpha;
+        sumAlpha += alpha;
+        nonTransparentPixels++;
+
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  if (sumAlpha === 0) {
+    return {
+      cgX: img.width / 2,
+      cgY: img.height / 2,
+      minX: 0,
+      maxX: img.width,
+      minY: 0,
+      maxY: img.height,
+      nonTransparentPixels: 0,
+    };
+  }
+
+  return {
+    cgX: sumX / sumAlpha,
+    cgY: sumY / sumAlpha,
+    minX,
+    maxX,
+    minY,
+    maxY,
+    nonTransparentPixels,
+  };
+}
+
+function getCanvasBounds(
+  contentMinX: number,
+  contentMaxX: number,
+  contentMinY: number,
+  contentMaxY: number,
+  cgX: number,
+  cgY: number,
+  rotation: number,
+  scale: number,
+  canvasX: number,
+  canvasY: number,
+) {
+  const rotRad = (rotation * Math.PI) / 180;
+  const cos = Math.cos(rotRad);
+  const sin = Math.sin(rotRad);
+
+  const corners = [
+    { x: contentMinX, y: contentMinY },
+    { x: contentMaxX, y: contentMinY },
+    { x: contentMaxX, y: contentMaxY },
+    { x: contentMinX, y: contentMaxY },
+  ];
+
+  let minX = Infinity,
+    maxX = -Infinity;
+  let minY = Infinity,
+    maxY = -Infinity;
+
+  for (const c of corners) {
+    const dx = c.x - cgX;
+    const dy = c.y - cgY;
+    const rx = dx * scale * cos - dy * scale * sin;
+    const ry = dx * scale * sin + dy * scale * cos;
+    const ax = canvasX + rx;
+    const ay = canvasY + ry;
+
+    if (ax < minX) minX = ax;
+    if (ax > maxX) maxX = ax;
+    if (ay < minY) minY = ay;
+    if (ay > maxY) maxY = ay;
+  }
+
+  return { minX, maxX, minY, maxY };
+}
+
 // Separate component for each image to handle useImage hook and Transformers properly
 const URLImage = ({
   image,
@@ -111,8 +245,51 @@ const URLImage = ({
   useEffect(() => {
     if (img && image.scaleX === 1 && image.scaleY === 1 && !image.width) {
       // Fit to the longest edge of the canvas
-      const maxDim = Math.max(img.width, img.height);
-      const scale = LOGICAL_SIZE / maxDim;
+      const metrics = computeImageMetrics(img);
+      const contentCenterX = (metrics.minX + metrics.maxX) / 2;
+      const targetX = (metrics.cgX + contentCenterX) / 2;
+
+      const contentCenterY = (metrics.minY + metrics.maxY) / 2;
+      const targetY = (metrics.cgY + contentCenterY) / 2;
+
+      const PADDING = LOGICAL_SIZE * 0.025;
+      const SAFE_MIN = PADDING;
+      const SAFE_MAX = LOGICAL_SIZE - PADDING;
+      const SAFE_SIZE = SAFE_MAX - SAFE_MIN;
+
+      // To ensure it fits perfectly within padding, scale is evaluated based on distance from target to edge
+      const maxDistX = Math.max(metrics.maxX - targetX, targetX - metrics.minX);
+      const maxDistY = Math.max(metrics.maxY - targetY, targetY - metrics.minY);
+      const requiredMaxDist = Math.max(maxDistX, maxDistY);
+      const scale = requiredMaxDist > 0 ? SAFE_SIZE / 2 / requiredMaxDist : 1;
+
+      let newX = LOGICAL_SIZE / 2 - (targetX - metrics.cgX) * scale;
+      let newY = LOGICAL_SIZE / 2 - (targetY - metrics.cgY) * scale;
+
+      let bounds = getCanvasBounds(
+        metrics.minX,
+        metrics.maxX,
+        metrics.minY,
+        metrics.maxY,
+        metrics.cgX,
+        metrics.cgY,
+        0,
+        scale,
+        newX,
+        newY,
+      );
+
+      if (bounds.minX < SAFE_MIN) {
+        newX += SAFE_MIN - bounds.minX;
+      } else if (bounds.maxX > SAFE_MAX) {
+        newX -= bounds.maxX - SAFE_MAX;
+      }
+
+      if (bounds.minY < SAFE_MIN) {
+        newY += SAFE_MIN - bounds.minY;
+      } else if (bounds.maxY > SAFE_MAX) {
+        newY -= bounds.maxY - SAFE_MAX;
+      }
 
       onChange({
         ...image,
@@ -120,9 +297,15 @@ const URLImage = ({
         height: img.height,
         scaleX: scale,
         scaleY: scale,
-        // center it
-        x: LOGICAL_SIZE / 2 - (img.width * scale) / 2,
-        y: LOGICAL_SIZE / 2 - (img.height * scale) / 2,
+        cgX: metrics.cgX,
+        cgY: metrics.cgY,
+        contentMinX: metrics.minX,
+        contentMaxX: metrics.maxX,
+        contentMinY: metrics.minY,
+        contentMaxY: metrics.maxY,
+        nonTransparentArea: metrics.nonTransparentPixels,
+        x: newX,
+        y: newY,
       });
     }
   }, [img]); // intentionally don't include all deps to only run on initial load
@@ -136,6 +319,8 @@ const URLImage = ({
         ref={shapeRef}
         x={image.x}
         y={image.y}
+        offsetX={image.cgX ?? 0}
+        offsetY={image.cgY ?? 0}
         width={image.width}
         height={image.height}
         rotation={image.rotation}
@@ -170,6 +355,7 @@ const URLImage = ({
       {isSelected && (
         <Transformer
           ref={trRef}
+          centeredScaling={true}
           boundBoxFunc={(oldBox, newBox) => {
             // limit resize
             if (newBox.width < 5 || newBox.height < 5) {
@@ -232,6 +418,178 @@ export default function App() {
   );
   const moveRight = useCallback(
     () => updateSelectedImage((img) => ({ ...img, x: img.x + 1 })),
+    [updateSelectedImage],
+  );
+  const autoCenterX = useCallback(
+    () =>
+      updateSelectedImage((img) => {
+        const contentMinX = img.contentMinX ?? 0;
+        const contentMaxX = img.contentMaxX ?? img.width ?? 0;
+        const contentCenterX = (contentMinX + contentMaxX) / 2;
+        const targetX = ((img.cgX ?? 0) + contentCenterX) / 2;
+
+        const contentMinY = img.contentMinY ?? 0;
+        const contentMaxY = img.contentMaxY ?? img.height ?? 0;
+        const contentCenterY = (contentMinY + contentMaxY) / 2;
+        const targetY = ((img.cgY ?? 0) + contentCenterY) / 2;
+
+        const rotRad = (img.rotation * Math.PI) / 180;
+        const dx = targetX - (img.cgX ?? 0);
+        const dy = targetY - (img.cgY ?? 0);
+
+        let scale = img.scaleX;
+        let dxCanvas =
+          dx * scale * Math.cos(rotRad) - dy * scale * Math.sin(rotRad);
+        let newX = LOGICAL_SIZE / 2 - dxCanvas;
+
+        const PADDING = LOGICAL_SIZE * 0.025;
+        const SAFE_MIN = PADDING;
+        const SAFE_MAX = LOGICAL_SIZE - PADDING;
+        const SAFE_SIZE = SAFE_MAX - SAFE_MIN;
+
+        let bounds = getCanvasBounds(
+          contentMinX,
+          contentMaxX,
+          contentMinY,
+          contentMaxY,
+          img.cgX ?? 0,
+          img.cgY ?? 0,
+          img.rotation,
+          scale,
+          newX,
+          img.y,
+        );
+
+        if (bounds.maxX - bounds.minX > SAFE_SIZE) {
+          scale = scale * (SAFE_SIZE / (bounds.maxX - bounds.minX));
+          dxCanvas =
+            dx * scale * Math.cos(rotRad) - dy * scale * Math.sin(rotRad);
+          newX = LOGICAL_SIZE / 2 - dxCanvas;
+          bounds = getCanvasBounds(
+            contentMinX,
+            contentMaxX,
+            contentMinY,
+            contentMaxY,
+            img.cgX ?? 0,
+            img.cgY ?? 0,
+            img.rotation,
+            scale,
+            newX,
+            img.y,
+          );
+        }
+
+        if (bounds.minX < SAFE_MIN) {
+          newX += SAFE_MIN - bounds.minX;
+        } else if (bounds.maxX > SAFE_MAX) {
+          newX -= bounds.maxX - SAFE_MAX;
+        }
+
+        return { ...img, x: newX, scaleX: scale, scaleY: scale };
+      }),
+    [updateSelectedImage],
+  );
+  const autoCenterY = useCallback(
+    () =>
+      updateSelectedImage((img) => {
+        const contentMinX = img.contentMinX ?? 0;
+        const contentMaxX = img.contentMaxX ?? img.width ?? 0;
+        const contentCenterX = (contentMinX + contentMaxX) / 2;
+        const targetX = ((img.cgX ?? 0) + contentCenterX) / 2;
+
+        const contentMinY = img.contentMinY ?? 0;
+        const contentMaxY = img.contentMaxY ?? img.height ?? 0;
+        const contentCenterY = (contentMinY + contentMaxY) / 2;
+        const targetY = ((img.cgY ?? 0) + contentCenterY) / 2;
+
+        const rotRad = (img.rotation * Math.PI) / 180;
+        const dx = targetX - (img.cgX ?? 0);
+        const dy = targetY - (img.cgY ?? 0);
+
+        let scale = img.scaleX;
+        let dyCanvas =
+          dx * scale * Math.sin(rotRad) + dy * scale * Math.cos(rotRad);
+        let newY = LOGICAL_SIZE / 2 - dyCanvas;
+
+        const PADDING = LOGICAL_SIZE * 0.025;
+        const SAFE_MIN = PADDING;
+        const SAFE_MAX = LOGICAL_SIZE - PADDING;
+        const SAFE_SIZE = SAFE_MAX - SAFE_MIN;
+
+        let bounds = getCanvasBounds(
+          contentMinX,
+          contentMaxX,
+          contentMinY,
+          contentMaxY,
+          img.cgX ?? 0,
+          img.cgY ?? 0,
+          img.rotation,
+          scale,
+          img.x,
+          newY,
+        );
+
+        if (bounds.maxY - bounds.minY > SAFE_SIZE) {
+          scale = scale * (SAFE_SIZE / (bounds.maxY - bounds.minY));
+          dyCanvas =
+            dx * scale * Math.sin(rotRad) + dy * scale * Math.cos(rotRad);
+          newY = LOGICAL_SIZE / 2 - dyCanvas;
+          bounds = getCanvasBounds(
+            contentMinX,
+            contentMaxX,
+            contentMinY,
+            contentMaxY,
+            img.cgX ?? 0,
+            img.cgY ?? 0,
+            img.rotation,
+            scale,
+            img.x,
+            newY,
+          );
+        }
+
+        if (bounds.minY < SAFE_MIN) {
+          newY += SAFE_MIN - bounds.minY;
+        } else if (bounds.maxY > SAFE_MAX) {
+          newY -= bounds.maxY - SAFE_MAX;
+        }
+
+        return { ...img, y: newY, scaleX: scale, scaleY: scale };
+      }),
+    [updateSelectedImage],
+  );
+  const autoScale = useCallback(
+    () =>
+      updateSelectedImage((img) => {
+        const contentMinX = img.contentMinX ?? 0;
+        const contentMaxX = img.contentMaxX ?? img.width ?? LOGICAL_SIZE;
+        const contentCenterX = (contentMinX + contentMaxX) / 2;
+        const targetX = ((img.cgX ?? 0) + contentCenterX) / 2;
+
+        const contentMinY = img.contentMinY ?? 0;
+        const contentMaxY = img.contentMaxY ?? img.height ?? LOGICAL_SIZE;
+        const contentCenterY = (contentMinY + contentMaxY) / 2;
+        const targetY = ((img.cgY ?? 0) + contentCenterY) / 2;
+
+        const maxDistX = Math.max(contentMaxX - targetX, targetX - contentMinX);
+        const maxDistY = Math.max(contentMaxY - targetY, targetY - contentMinY);
+        const requiredMaxDist = Math.max(maxDistX, maxDistY);
+
+        if (requiredMaxDist <= 0) return img;
+
+        const PADDING = LOGICAL_SIZE * 0.025;
+        const SAFE_MIN = PADDING;
+        const SAFE_MAX = LOGICAL_SIZE - PADDING;
+        const SAFE_SIZE = SAFE_MAX - SAFE_MIN;
+
+        const newScale = SAFE_SIZE / 2 / requiredMaxDist;
+
+        return {
+          ...img,
+          scaleX: newScale,
+          scaleY: newScale,
+        };
+      }),
     [updateSelectedImage],
   );
   const zoomIn = useCallback(
@@ -416,6 +774,21 @@ export default function App() {
     }, 50);
   };
 
+  const updateOccupancyRate = () => {
+    let totalArea = 0;
+    for (const img of images) {
+      if (img.nonTransparentArea) {
+        // Multiply by absolute scales in case they are negative (though rare here, area is positive)
+        totalArea +=
+          img.nonTransparentArea * Math.abs(img.scaleX) * Math.abs(img.scaleY);
+      }
+    }
+    const canvasArea = LOGICAL_SIZE * LOGICAL_SIZE;
+    return ((totalArea / canvasArea) * 100).toFixed(2);
+  };
+
+  const occupancyRate = updateOccupancyRate();
+
   return (
     <div className="flex flex-col h-[100dvh] w-full bg-gray-50 text-gray-900 overflow-hidden font-sans">
       {/* Header */}
@@ -558,6 +931,14 @@ export default function App() {
           </div>
         </div>
 
+        {/* Canvas Info */}
+        <div className="w-full max-w-md px-2 mt-2 flex justify-between items-center text-xs text-gray-500 font-medium tracking-wide">
+          <span>Occupancy Rate</span>
+          <span className="text-gray-700 bg-gray-200/60 px-2 py-0.5 rounded">
+            {occupancyRate}%
+          </span>
+        </div>
+
         {/* Layers Area */}
         <div className="w-full max-w-md px-4 mt-4 flex gap-2 overflow-x-auto hide-scrollbar">
           {images.map((img, i) => (
@@ -610,6 +991,29 @@ export default function App() {
                   >
                     <ChevronRight className="w-5 h-5" />
                   </LongPressButton>
+                </div>
+                <div className="flex gap-1">
+                  <button
+                    onClick={autoCenterX}
+                    title="Center Horizontally"
+                    className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors flex items-center justify-center"
+                  >
+                    <MoveHorizontal className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={autoCenterY}
+                    title="Center Vertically"
+                    className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors flex items-center justify-center"
+                  >
+                    <MoveVertical className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={autoScale}
+                    title="Auto Scale"
+                    className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors flex items-center justify-center"
+                  >
+                    <Maximize className="w-5 h-5" />
+                  </button>
                 </div>
                 <div className="flex bg-gray-50 rounded-lg p-1 border border-gray-100">
                   <LongPressButton
