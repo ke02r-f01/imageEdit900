@@ -22,6 +22,8 @@ import {
   MoveHorizontal,
   MoveVertical,
   Maximize,
+  Undo2,
+  Redo2,
 } from "lucide-react";
 
 const LOGICAL_SIZE = 900;
@@ -247,49 +249,20 @@ const URLImage = ({
       // Fit to the longest edge of the canvas
       const metrics = computeImageMetrics(img);
       const contentCenterX = (metrics.minX + metrics.maxX) / 2;
-      const targetX = (metrics.cgX + contentCenterX) / 2;
-
       const contentCenterY = (metrics.minY + metrics.maxY) / 2;
-      const targetY = (metrics.cgY + contentCenterY) / 2;
 
       const PADDING = LOGICAL_SIZE * 0.025;
-      const SAFE_MIN = PADDING;
       const SAFE_MAX = LOGICAL_SIZE - PADDING;
-      const SAFE_SIZE = SAFE_MAX - SAFE_MIN;
+      const SAFE_SIZE = SAFE_MAX - PADDING;
 
-      // To ensure it fits perfectly within padding, scale is evaluated based on distance from target to edge
-      const maxDistX = Math.max(metrics.maxX - targetX, targetX - metrics.minX);
-      const maxDistY = Math.max(metrics.maxY - targetY, targetY - metrics.minY);
-      const requiredMaxDist = Math.max(maxDistX, maxDistY);
-      const scale = requiredMaxDist > 0 ? SAFE_SIZE / 2 / requiredMaxDist : 1;
+      const cWidth = metrics.maxX - metrics.minX;
+      const cHeight = metrics.maxY - metrics.minY;
+      const cMax = Math.max(cWidth, cHeight);
 
-      let newX = LOGICAL_SIZE / 2 - (targetX - metrics.cgX) * scale;
-      let newY = LOGICAL_SIZE / 2 - (targetY - metrics.cgY) * scale;
+      const scale = cMax > 0 ? SAFE_SIZE / cMax : 1;
 
-      let bounds = getCanvasBounds(
-        metrics.minX,
-        metrics.maxX,
-        metrics.minY,
-        metrics.maxY,
-        metrics.cgX,
-        metrics.cgY,
-        0,
-        scale,
-        newX,
-        newY,
-      );
-
-      if (bounds.minX < SAFE_MIN) {
-        newX += SAFE_MIN - bounds.minX;
-      } else if (bounds.maxX > SAFE_MAX) {
-        newX -= bounds.maxX - SAFE_MAX;
-      }
-
-      if (bounds.minY < SAFE_MIN) {
-        newY += SAFE_MIN - bounds.minY;
-      } else if (bounds.maxY > SAFE_MAX) {
-        newY -= bounds.maxY - SAFE_MAX;
-      }
+      const newX = LOGICAL_SIZE / 2 - (contentCenterX - metrics.cgX) * scale;
+      const newY = LOGICAL_SIZE / 2 - (contentCenterY - metrics.cgY) * scale;
 
       onChange({
         ...image,
@@ -369,8 +342,85 @@ const URLImage = ({
   );
 };
 
+function useHistory<T>(initialPresent: T) {
+  const [state, setState] = useState({
+    past: [] as T[],
+    present: initialPresent,
+    future: [] as T[],
+  });
+
+  const canUndo = state.past.length > 0;
+  const canRedo = state.future.length > 0;
+
+  const undo = useCallback(() => {
+    setState((curr) => {
+      if (curr.past.length === 0) return curr;
+      const previous = curr.past[curr.past.length - 1];
+      const newPast = curr.past.slice(0, curr.past.length - 1);
+      return {
+        past: newPast,
+        present: previous,
+        future: [curr.present, ...curr.future],
+      };
+    });
+  }, []);
+
+  const redo = useCallback(() => {
+    setState((curr) => {
+      if (curr.future.length === 0) return curr;
+      const next = curr.future[0];
+      const newFuture = curr.future.slice(1);
+      return {
+        past: [...curr.past, curr.present],
+        present: next,
+        future: newFuture,
+      };
+    });
+  }, []);
+
+  const lastActionTime = useRef<number>(0);
+
+  const setPresent = useCallback((action: React.SetStateAction<T>) => {
+    setState((curr) => {
+      const nextPresent =
+        typeof action === "function"
+          ? (action as Function)(curr.present)
+          : action;
+      if (nextPresent === curr.present) return curr;
+
+      const now = Date.now();
+      const isRapid = now - lastActionTime.current < 400;
+      lastActionTime.current = now;
+
+      if (isRapid && curr.past.length > 0) {
+        // Replace the current state but keep the past same
+        return {
+          past: curr.past,
+          present: nextPresent,
+          future: [],
+        };
+      }
+
+      return {
+        past: [...curr.past, curr.present].slice(-50),
+        present: nextPresent,
+        future: [],
+      };
+    });
+  }, []);
+
+  return { state: state.present, setPresent, undo, redo, canUndo, canRedo };
+}
+
 export default function App() {
-  const [images, setImages] = useState<ImageNode[]>([]);
+  const {
+    state: images,
+    setPresent: setImages,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+  } = useHistory<ImageNode[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showGrid, setShowGrid] = useState(true);
 
@@ -805,6 +855,24 @@ export default function App() {
           </h1>
         </div>
         <div className="flex items-center">
+          <div className="flex items-center gap-1 mr-4 border-r border-gray-200 pr-4">
+            <button
+              onClick={undo}
+              disabled={!canUndo}
+              className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Undo"
+            >
+              <Undo2 className="w-5 h-5" />
+            </button>
+            <button
+              onClick={redo}
+              disabled={!canRedo}
+              className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Redo"
+            >
+              <Redo2 className="w-5 h-5" />
+            </button>
+          </div>
           <button
             onClick={handleExport}
             className="px-4 py-1.5 bg-blue-600 text-white rounded-full text-sm font-medium hover:bg-blue-500 shadow-lg shadow-blue-600/20 transition-colors flex items-center gap-2"
@@ -917,6 +985,12 @@ export default function App() {
                   </defs>
                   {/* Fill with grid pattern */}
                   <rect width="100%" height="100%" fill="url(#grid)" />
+                  {/* Padding Overlay */}
+                  <path
+                    d={`M 0 0 H ${LOGICAL_SIZE} V ${LOGICAL_SIZE} H 0 Z M ${LOGICAL_SIZE * 0.025} ${LOGICAL_SIZE * 0.025} V ${LOGICAL_SIZE - LOGICAL_SIZE * 0.025} H ${LOGICAL_SIZE - LOGICAL_SIZE * 0.025} V ${LOGICAL_SIZE * 0.025} Z`}
+                    fill="rgba(128, 128, 128, 0.3)"
+                    fillRule="evenodd"
+                  />
                   {/* Outer border for the grid */}
                   <rect
                     width="100%"
