@@ -107,6 +107,17 @@ function computeImageMetrics(img: HTMLImageElement): {
   const canvas = document.createElement("canvas");
   canvas.width = img.width;
   canvas.height = img.height;
+  if (img.width === 0 || img.height === 0) {
+    return {
+      cgX: 0,
+      cgY: 0,
+      minX: 0,
+      maxX: 0,
+      minY: 0,
+      maxY: 0,
+      nonTransparentPixels: 0,
+    };
+  }
   const ctx = canvas.getContext("2d");
   if (!ctx)
     return {
@@ -167,9 +178,9 @@ function computeImageMetrics(img: HTMLImageElement): {
     cgX: sumX / sumAlpha,
     cgY: sumY / sumAlpha,
     minX,
-    maxX,
+    maxX: maxX + 1,
     minY,
-    maxY,
+    maxY: maxY + 1,
     nonTransparentPixels,
   };
 }
@@ -261,8 +272,14 @@ const URLImage = ({
 
       const scale = cMax > 0 ? SAFE_SIZE / cMax : 1;
 
-      const newX = LOGICAL_SIZE / 2 - (contentCenterX - metrics.cgX) * scale;
-      const newY = LOGICAL_SIZE / 2 - (contentCenterY - metrics.cgY) * scale;
+      const rotRad = (image.rotation * Math.PI) / 180;
+      const dx = contentCenterX - metrics.cgX;
+      const dy = contentCenterY - metrics.cgY;
+      const dxCanvas = dx * scale * Math.cos(rotRad) - dy * scale * Math.sin(rotRad);
+      const dyCanvas = dx * scale * Math.sin(rotRad) + dy * scale * Math.cos(rotRad);
+
+      const newX = LOGICAL_SIZE / 2 - dxCanvas;
+      const newY = LOGICAL_SIZE / 2 - dyCanvas;
 
       onChange({
         ...image,
@@ -423,12 +440,60 @@ export default function App() {
   } = useHistory<ImageNode[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showGrid, setShowGrid] = useState(true);
+  const [overlapPixels, setOverlapPixels] = useState<number>(0);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!stageRef.current || scale <= 0) return;
+      try {
+        if (stageRef.current.width() === 0 || stageRef.current.height() === 0)
+          return;
+
+        const stageClone = stageRef.current.clone();
+        stageClone.width(LOGICAL_SIZE);
+        stageClone.height(LOGICAL_SIZE);
+        stageClone.scaleX(1);
+        stageClone.scaleY(1);
+        const transformers = stageClone.find('Transformer');
+        transformers.forEach((tr: any) => tr.destroy());
+
+        const canvas = stageClone.toCanvas({ pixelRatio: 1 });
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        const imageData = ctx.getImageData(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+        const data = imageData.data;
+        const PADDING = Math.floor(LOGICAL_SIZE * 0.025);
+
+        let overlapCount = 0;
+        for (let y = 0; y < LOGICAL_SIZE; y++) {
+          for (let x = 0; x < LOGICAL_SIZE; x++) {
+            if (
+              x < PADDING ||
+              x >= LOGICAL_SIZE - PADDING ||
+              y < PADDING ||
+              y >= LOGICAL_SIZE - PADDING
+            ) {
+              const alpha = data[(y * LOGICAL_SIZE + x) * 4 + 3];
+              if (alpha > 10) {
+                overlapCount++;
+              }
+            }
+          }
+        }
+        setOverlapPixels(overlapCount);
+      } catch (e) {
+        console.error("Failed to calculate overlap pixels", e);
+      }
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [images, scale]);
 
   // Responsive stage calculation
   useEffect(() => {
@@ -476,66 +541,19 @@ export default function App() {
         const contentMinX = img.contentMinX ?? 0;
         const contentMaxX = img.contentMaxX ?? img.width ?? 0;
         const contentCenterX = (contentMinX + contentMaxX) / 2;
-        const targetX = ((img.cgX ?? 0) + contentCenterX) / 2;
 
         const contentMinY = img.contentMinY ?? 0;
         const contentMaxY = img.contentMaxY ?? img.height ?? 0;
         const contentCenterY = (contentMinY + contentMaxY) / 2;
-        const targetY = ((img.cgY ?? 0) + contentCenterY) / 2;
 
         const rotRad = (img.rotation * Math.PI) / 180;
-        const dx = targetX - (img.cgX ?? 0);
-        const dy = targetY - (img.cgY ?? 0);
+        const dx = contentCenterX - (img.cgX ?? 0);
+        const dy = contentCenterY - (img.cgY ?? 0);
 
-        let scale = img.scaleX;
-        let dxCanvas =
-          dx * scale * Math.cos(rotRad) - dy * scale * Math.sin(rotRad);
-        let newX = LOGICAL_SIZE / 2 - dxCanvas;
+        const dxCanvas = dx * img.scaleX * Math.cos(rotRad) - dy * img.scaleY * Math.sin(rotRad);
+        const newX = LOGICAL_SIZE / 2 - dxCanvas;
 
-        const PADDING = LOGICAL_SIZE * 0.025;
-        const SAFE_MIN = PADDING;
-        const SAFE_MAX = LOGICAL_SIZE - PADDING;
-        const SAFE_SIZE = SAFE_MAX - SAFE_MIN;
-
-        let bounds = getCanvasBounds(
-          contentMinX,
-          contentMaxX,
-          contentMinY,
-          contentMaxY,
-          img.cgX ?? 0,
-          img.cgY ?? 0,
-          img.rotation,
-          scale,
-          newX,
-          img.y,
-        );
-
-        if (bounds.maxX - bounds.minX > SAFE_SIZE) {
-          scale = scale * (SAFE_SIZE / (bounds.maxX - bounds.minX));
-          dxCanvas =
-            dx * scale * Math.cos(rotRad) - dy * scale * Math.sin(rotRad);
-          newX = LOGICAL_SIZE / 2 - dxCanvas;
-          bounds = getCanvasBounds(
-            contentMinX,
-            contentMaxX,
-            contentMinY,
-            contentMaxY,
-            img.cgX ?? 0,
-            img.cgY ?? 0,
-            img.rotation,
-            scale,
-            newX,
-            img.y,
-          );
-        }
-
-        if (bounds.minX < SAFE_MIN) {
-          newX += SAFE_MIN - bounds.minX;
-        } else if (bounds.maxX > SAFE_MAX) {
-          newX -= bounds.maxX - SAFE_MAX;
-        }
-
-        return { ...img, x: newX, scaleX: scale, scaleY: scale };
+        return { ...img, x: newX };
       }),
     [updateSelectedImage],
   );
@@ -545,66 +563,19 @@ export default function App() {
         const contentMinX = img.contentMinX ?? 0;
         const contentMaxX = img.contentMaxX ?? img.width ?? 0;
         const contentCenterX = (contentMinX + contentMaxX) / 2;
-        const targetX = ((img.cgX ?? 0) + contentCenterX) / 2;
 
         const contentMinY = img.contentMinY ?? 0;
         const contentMaxY = img.contentMaxY ?? img.height ?? 0;
         const contentCenterY = (contentMinY + contentMaxY) / 2;
-        const targetY = ((img.cgY ?? 0) + contentCenterY) / 2;
 
         const rotRad = (img.rotation * Math.PI) / 180;
-        const dx = targetX - (img.cgX ?? 0);
-        const dy = targetY - (img.cgY ?? 0);
+        const dx = contentCenterX - (img.cgX ?? 0);
+        const dy = contentCenterY - (img.cgY ?? 0);
 
-        let scale = img.scaleX;
-        let dyCanvas =
-          dx * scale * Math.sin(rotRad) + dy * scale * Math.cos(rotRad);
-        let newY = LOGICAL_SIZE / 2 - dyCanvas;
+        const dyCanvas = dx * img.scaleX * Math.sin(rotRad) + dy * img.scaleY * Math.cos(rotRad);
+        const newY = LOGICAL_SIZE / 2 - dyCanvas;
 
-        const PADDING = LOGICAL_SIZE * 0.025;
-        const SAFE_MIN = PADDING;
-        const SAFE_MAX = LOGICAL_SIZE - PADDING;
-        const SAFE_SIZE = SAFE_MAX - SAFE_MIN;
-
-        let bounds = getCanvasBounds(
-          contentMinX,
-          contentMaxX,
-          contentMinY,
-          contentMaxY,
-          img.cgX ?? 0,
-          img.cgY ?? 0,
-          img.rotation,
-          scale,
-          img.x,
-          newY,
-        );
-
-        if (bounds.maxY - bounds.minY > SAFE_SIZE) {
-          scale = scale * (SAFE_SIZE / (bounds.maxY - bounds.minY));
-          dyCanvas =
-            dx * scale * Math.sin(rotRad) + dy * scale * Math.cos(rotRad);
-          newY = LOGICAL_SIZE / 2 - dyCanvas;
-          bounds = getCanvasBounds(
-            contentMinX,
-            contentMaxX,
-            contentMinY,
-            contentMaxY,
-            img.cgX ?? 0,
-            img.cgY ?? 0,
-            img.rotation,
-            scale,
-            img.x,
-            newY,
-          );
-        }
-
-        if (bounds.minY < SAFE_MIN) {
-          newY += SAFE_MIN - bounds.minY;
-        } else if (bounds.maxY > SAFE_MAX) {
-          newY -= bounds.maxY - SAFE_MAX;
-        }
-
-        return { ...img, y: newY, scaleX: scale, scaleY: scale };
+        return { ...img, y: newY };
       }),
     [updateSelectedImage],
   );
@@ -614,28 +585,34 @@ export default function App() {
         const contentMinX = img.contentMinX ?? 0;
         const contentMaxX = img.contentMaxX ?? img.width ?? LOGICAL_SIZE;
         const contentCenterX = (contentMinX + contentMaxX) / 2;
-        const targetX = ((img.cgX ?? 0) + contentCenterX) / 2;
 
         const contentMinY = img.contentMinY ?? 0;
         const contentMaxY = img.contentMaxY ?? img.height ?? LOGICAL_SIZE;
         const contentCenterY = (contentMinY + contentMaxY) / 2;
-        const targetY = ((img.cgY ?? 0) + contentCenterY) / 2;
-
-        const maxDistX = Math.max(contentMaxX - targetX, targetX - contentMinX);
-        const maxDistY = Math.max(contentMaxY - targetY, targetY - contentMinY);
-        const requiredMaxDist = Math.max(maxDistX, maxDistY);
-
-        if (requiredMaxDist <= 0) return img;
 
         const PADDING = LOGICAL_SIZE * 0.025;
-        const SAFE_MIN = PADDING;
         const SAFE_MAX = LOGICAL_SIZE - PADDING;
-        const SAFE_SIZE = SAFE_MAX - SAFE_MIN;
+        const SAFE_SIZE = SAFE_MAX - PADDING;
 
-        const newScale = SAFE_SIZE / 2 / requiredMaxDist;
+        const cWidth = contentMaxX - contentMinX;
+        const cHeight = contentMaxY - contentMinY;
+        const cMax = Math.max(cWidth, cHeight);
+
+        const newScale = cMax > 0 ? SAFE_SIZE / cMax : 1;
+        
+        const rotRad = (img.rotation * Math.PI) / 180;
+        const dx = contentCenterX - (img.cgX ?? 0);
+        const dy = contentCenterY - (img.cgY ?? 0);
+        const dxCanvas = dx * newScale * Math.cos(rotRad) - dy * newScale * Math.sin(rotRad);
+        const dyCanvas = dx * newScale * Math.sin(rotRad) + dy * newScale * Math.cos(rotRad);
+
+        const newX = LOGICAL_SIZE / 2 - dxCanvas;
+        const newY = LOGICAL_SIZE / 2 - dyCanvas;
 
         return {
           ...img,
+          x: newX,
+          y: newY,
           scaleX: newScale,
           scaleY: newScale,
         };
@@ -1006,11 +983,19 @@ export default function App() {
         </div>
 
         {/* Canvas Info */}
-        <div className="w-full max-w-md px-2 mt-2 flex justify-between items-center text-xs text-gray-500 font-medium tracking-wide">
-          <span>Occupancy Rate</span>
-          <span className="text-gray-700 bg-gray-200/60 px-2 py-0.5 rounded">
-            {occupancyRate}%
-          </span>
+        <div className="w-full max-w-md px-2 mt-2 flex flex-col gap-1 text-xs text-gray-500 font-medium tracking-wide">
+          <div className="flex justify-between items-center">
+            <span>Occupancy Rate</span>
+            <span className="text-gray-700 bg-gray-200/60 px-2 py-0.5 rounded">
+              {occupancyRate}%
+            </span>
+          </div>
+          <div className="flex justify-between items-center">
+            <span>Padding Overlap Pixels</span>
+            <span className="text-gray-700 bg-gray-200/60 px-2 py-0.5 rounded">
+              {overlapPixels.toLocaleString()} px
+            </span>
+          </div>
         </div>
 
         {/* Layers Area */}
