@@ -26,7 +26,7 @@ import {
   Redo2,
 } from "lucide-react";
 
-const LOGICAL_SIZE = 900;
+
 
 interface ImageNode {
   id: string;
@@ -236,11 +236,13 @@ const URLImage = ({
   isSelected,
   onSelect,
   onChange,
+  logicalSize,
 }: {
   image: ImageNode;
   isSelected: boolean;
   onSelect: () => void;
   onChange: (newAttrs: ImageNode) => void;
+  logicalSize: number;
 }) => {
   const [img] = useImage(image.url);
   const shapeRef = useRef<any>(null);
@@ -262,8 +264,8 @@ const URLImage = ({
       const contentCenterX = (metrics.minX + metrics.maxX) / 2;
       const contentCenterY = (metrics.minY + metrics.maxY) / 2;
 
-      const PADDING = LOGICAL_SIZE * 0.025;
-      const SAFE_MAX = LOGICAL_SIZE - PADDING;
+      const PADDING = logicalSize * 0.025;
+      const SAFE_MAX = logicalSize - PADDING;
       const SAFE_SIZE = SAFE_MAX - PADDING;
 
       const cWidth = metrics.maxX - metrics.minX;
@@ -278,8 +280,8 @@ const URLImage = ({
       const dxCanvas = dx * scale * Math.cos(rotRad) - dy * scale * Math.sin(rotRad);
       const dyCanvas = dx * scale * Math.sin(rotRad) + dy * scale * Math.cos(rotRad);
 
-      const newX = LOGICAL_SIZE / 2 - dxCanvas;
-      const newY = LOGICAL_SIZE / 2 - dyCanvas;
+      const newX = logicalSize / 2 - dxCanvas;
+      const newY = logicalSize / 2 - dyCanvas;
 
       onChange({
         ...image,
@@ -441,6 +443,8 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showGrid, setShowGrid] = useState(true);
   const [overlapPixels, setOverlapPixels] = useState<number>(0);
+  const [canvasSize, setCanvasSize] = useState<number>(900);
+  const [exportFormat, setExportFormat] = useState<"png" | "jpg">("png");
 
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<any>(null);
@@ -456,8 +460,8 @@ export default function App() {
           return;
 
         const stageClone = stageRef.current.clone();
-        stageClone.width(LOGICAL_SIZE);
-        stageClone.height(LOGICAL_SIZE);
+        stageClone.width(canvasSize);
+        stageClone.height(canvasSize);
         stageClone.scaleX(1);
         stageClone.scaleY(1);
         const transformers = stageClone.find('Transformer');
@@ -466,20 +470,20 @@ export default function App() {
         const canvas = stageClone.toCanvas({ pixelRatio: 1 });
         const ctx = canvas.getContext("2d");
         if (!ctx) return;
-        const imageData = ctx.getImageData(0, 0, LOGICAL_SIZE, LOGICAL_SIZE);
+        const imageData = ctx.getImageData(0, 0, canvasSize, canvasSize);
         const data = imageData.data;
-        const PADDING = Math.floor(LOGICAL_SIZE * 0.025);
+        const PADDING = Math.floor(canvasSize * 0.025);
 
         let overlapCount = 0;
-        for (let y = 0; y < LOGICAL_SIZE; y++) {
-          for (let x = 0; x < LOGICAL_SIZE; x++) {
+        for (let y = 0; y < canvasSize; y++) {
+          for (let x = 0; x < canvasSize; x++) {
             if (
               x < PADDING ||
-              x >= LOGICAL_SIZE - PADDING ||
+              x >= canvasSize - PADDING ||
               y < PADDING ||
-              y >= LOGICAL_SIZE - PADDING
+              y >= canvasSize - PADDING
             ) {
-              const alpha = data[(y * LOGICAL_SIZE + x) * 4 + 3];
+              const alpha = data[(y * canvasSize + x) * 4 + 3];
               if (alpha > 10) {
                 overlapCount++;
               }
@@ -493,7 +497,7 @@ export default function App() {
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [images, scale]);
+  }, [images, scale, canvasSize]);
 
   // Responsive stage calculation
   useEffect(() => {
@@ -502,13 +506,13 @@ export default function App() {
         let newWidth = containerRef.current.offsetWidth;
         // On very wide screens, cap it at max-w-md
         if (newWidth > 448) newWidth = 448;
-        setScale(newWidth / LOGICAL_SIZE);
+        setScale(newWidth / canvasSize);
       }
     };
     handleResize();
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  }, [canvasSize]);
 
   const updateSelectedImage = useCallback(
     (updateFn: (img: ImageNode) => ImageNode) => {
@@ -551,11 +555,11 @@ export default function App() {
         const dy = contentCenterY - (img.cgY ?? 0);
 
         const dxCanvas = dx * img.scaleX * Math.cos(rotRad) - dy * img.scaleY * Math.sin(rotRad);
-        const newX = LOGICAL_SIZE / 2 - dxCanvas;
+        const newX = canvasSize / 2 - dxCanvas;
 
         return { ...img, x: newX };
       }),
-    [updateSelectedImage],
+    [updateSelectedImage, canvasSize],
   );
   const autoCenterY = useCallback(
     () =>
@@ -573,25 +577,25 @@ export default function App() {
         const dy = contentCenterY - (img.cgY ?? 0);
 
         const dyCanvas = dx * img.scaleX * Math.sin(rotRad) + dy * img.scaleY * Math.cos(rotRad);
-        const newY = LOGICAL_SIZE / 2 - dyCanvas;
+        const newY = canvasSize / 2 - dyCanvas;
 
         return { ...img, y: newY };
       }),
-    [updateSelectedImage],
+    [updateSelectedImage, canvasSize],
   );
   const autoScale = useCallback(
     () =>
       updateSelectedImage((img) => {
         const contentMinX = img.contentMinX ?? 0;
-        const contentMaxX = img.contentMaxX ?? img.width ?? LOGICAL_SIZE;
+        const contentMaxX = img.contentMaxX ?? img.width ?? canvasSize;
         const contentCenterX = (contentMinX + contentMaxX) / 2;
 
         const contentMinY = img.contentMinY ?? 0;
-        const contentMaxY = img.contentMaxY ?? img.height ?? LOGICAL_SIZE;
+        const contentMaxY = img.contentMaxY ?? img.height ?? canvasSize;
         const contentCenterY = (contentMinY + contentMaxY) / 2;
 
-        const PADDING = LOGICAL_SIZE * 0.025;
-        const SAFE_MAX = LOGICAL_SIZE - PADDING;
+        const PADDING = canvasSize * 0.025;
+        const SAFE_MAX = canvasSize - PADDING;
         const SAFE_SIZE = SAFE_MAX - PADDING;
 
         const cWidth = contentMaxX - contentMinX;
@@ -606,8 +610,8 @@ export default function App() {
         const dxCanvas = dx * newScale * Math.cos(rotRad) - dy * newScale * Math.sin(rotRad);
         const dyCanvas = dx * newScale * Math.sin(rotRad) + dy * newScale * Math.cos(rotRad);
 
-        const newX = LOGICAL_SIZE / 2 - dxCanvas;
-        const newY = LOGICAL_SIZE / 2 - dyCanvas;
+        const newX = canvasSize / 2 - dxCanvas;
+        const newY = canvasSize / 2 - dyCanvas;
 
         return {
           ...img,
@@ -617,7 +621,7 @@ export default function App() {
           scaleY: newScale,
         };
       }),
-    [updateSelectedImage],
+    [updateSelectedImage, canvasSize],
   );
   const zoomIn = useCallback(
     () =>
@@ -664,18 +668,18 @@ export default function App() {
     updateSelectedImage((img) => {
       if (!img.width || !img.height) return img;
       const maxDim = Math.max(img.width, img.height);
-      const scale = LOGICAL_SIZE / maxDim;
+      const scale = canvasSize / maxDim;
       return {
         ...img,
         scaleX: scale,
         scaleY: scale,
         rotation: 0,
         opacity: 1,
-        x: LOGICAL_SIZE / 2 - (img.width * scale) / 2,
-        y: LOGICAL_SIZE / 2 - (img.height * scale) / 2,
+        x: canvasSize / 2 - (img.width * scale) / 2,
+        y: canvasSize / 2 - (img.height * scale) / 2,
       };
     });
-  }, [updateSelectedImage]);
+  }, [updateSelectedImage, canvasSize]);
 
   const moveLayerUp = useCallback(() => {
     setImages((prev) => {
@@ -716,8 +720,8 @@ export default function App() {
       const newImage: ImageNode = {
         id: uuidv4(),
         url,
-        x: LOGICAL_SIZE / 2, // Centering is handled in URLImage after load
-        y: LOGICAL_SIZE / 2,
+        x: canvasSize / 2, // Centering is handled in URLImage after load
+        y: canvasSize / 2,
         rotation: 0,
         scaleX: 1,
         scaleY: 1,
@@ -754,8 +758,8 @@ export default function App() {
           const newImage: ImageNode = {
             id: uuidv4(),
             url,
-            x: LOGICAL_SIZE / 2,
-            y: LOGICAL_SIZE / 2,
+            x: canvasSize / 2,
+            y: canvasSize / 2,
             rotation: 0,
             scaleX: 1,
             scaleY: 1,
@@ -777,7 +781,7 @@ export default function App() {
     }
   };
 
-  const handleExport = () => {
+  const handleExportPNG = () => {
     if (!stageRef.current) return;
 
     // Temporarily deselect so transformer handles don't show up in export
@@ -785,20 +789,71 @@ export default function App() {
     setSelectedId(null);
 
     setTimeout(() => {
-      const dataURL = stageRef.current.toDataURL({
-        pixelRatio: 1 / scale, // Scale back up to 900x900
-        mimeType: "image/png",
-      });
-      const link = document.createElement("a");
-      link.download = `mobile-canvas-${Date.now()}.png`;
-      link.href = dataURL;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      // Restore selection
-      if (wasSelected) setSelectedId(wasSelected);
+      try {
+        const dataURL = stageRef.current.toDataURL({
+          pixelRatio: 1 / scale, // Scale back up to canvasSize
+          mimeType: "image/png",
+        });
+        const link = document.createElement("a");
+        link.download = `mobile-canvas-${canvasSize}x${canvasSize}-${Date.now()}.png`;
+        link.href = dataURL;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } catch (e) {
+        console.error("Failed to export PNG", e);
+      } finally {
+        // Restore selection
+        if (wasSelected) setSelectedId(wasSelected);
+      }
     }, 50);
+  };
+
+  const handleExportJPG = () => {
+    if (!stageRef.current) return;
+
+    // Temporarily deselect so transformer handles don't show up in export
+    const wasSelected = selectedId;
+    setSelectedId(null);
+
+    setTimeout(() => {
+      try {
+        const stageCanvas = stageRef.current.toCanvas({ pixelRatio: 1 / scale });
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = canvasSize;
+        tempCanvas.height = canvasSize;
+        const tempCtx = tempCanvas.getContext("2d");
+        if (tempCtx) {
+          // Set white background
+          tempCtx.fillStyle = "#ffffff";
+          tempCtx.fillRect(0, 0, canvasSize, canvasSize);
+          
+          // Draw the stage canvas onto the white canvas (scaled up to fit)
+          tempCtx.drawImage(stageCanvas, 0, 0, canvasSize, canvasSize);
+          
+          const dataURL = tempCanvas.toDataURL("image/jpeg", 0.95);
+          const link = document.createElement("a");
+          link.download = `mobile-canvas-${canvasSize}x${canvasSize}-${Date.now()}.jpg`;
+          link.href = dataURL;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+      } catch (e) {
+        console.error("Failed to export JPG", e);
+      } finally {
+        // Restore selection
+        if (wasSelected) setSelectedId(wasSelected);
+      }
+    }, 50);
+  };
+
+  const handleExport = () => {
+    if (exportFormat === "png") {
+      handleExportPNG();
+    } else {
+      handleExportJPG();
+    }
   };
 
   const updateOccupancyRate = () => {
@@ -810,7 +865,7 @@ export default function App() {
           img.nonTransparentArea * Math.abs(img.scaleX) * Math.abs(img.scaleY);
       }
     }
-    const canvasArea = LOGICAL_SIZE * LOGICAL_SIZE;
+    const canvasArea = canvasSize * canvasSize;
     return ((totalArea / canvasArea) * 100).toFixed(2);
   };
 
@@ -824,40 +879,89 @@ export default function App() {
           <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shrink-0">
             <ImageIcon className="w-5 h-5 text-white" />
           </div>
-          <h1 className="text-lg font-semibold tracking-tight text-gray-900">
-            Lumina{" "}
-            <span className="text-gray-500 font-normal ml-2 hidden sm:inline">
-              900 × 900
-            </span>
-          </h1>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+            <h1 className="text-sm sm:text-lg font-semibold tracking-tight text-gray-900 leading-none">
+              Lumina
+            </h1>
+            {/* Canvas Size Selector */}
+            <div className="flex items-center gap-1 bg-gray-100 p-0.5 rounded-lg border border-gray-200">
+              <button
+                onClick={() => setCanvasSize(900)}
+                className={`px-2 py-0.5 text-[10px] sm:text-xs font-bold rounded transition-all ${
+                  canvasSize === 900
+                    ? "bg-white text-blue-600 shadow-sm"
+                    : "text-gray-500 hover:text-gray-900"
+                }`}
+              >
+                900 × 900
+              </button>
+              <button
+                onClick={() => setCanvasSize(1080)}
+                className={`px-2 py-0.5 text-[10px] sm:text-xs font-bold rounded transition-all ${
+                  canvasSize === 1080
+                    ? "bg-white text-blue-600 shadow-sm"
+                    : "text-gray-500 hover:text-gray-900"
+                }`}
+              >
+                1080 × 1080
+              </button>
+            </div>
+          </div>
         </div>
         <div className="flex items-center">
-          <div className="flex items-center gap-1 mr-4 border-r border-gray-200 pr-4">
+          <div className="flex items-center gap-1 mr-2 sm:mr-4 border-r border-gray-200 pr-2 sm:pr-4">
             <button
               onClick={undo}
               disabled={!canUndo}
-              className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-1.5 sm:p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Undo"
             >
-              <Undo2 className="w-5 h-5" />
+              <Undo2 className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
             <button
               onClick={redo}
               disabled={!canRedo}
-              className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="p-1.5 sm:p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Redo"
             >
-              <Redo2 className="w-5 h-5" />
+              <Redo2 className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
           </div>
-          <button
-            onClick={handleExport}
-            className="px-4 py-1.5 bg-blue-600 text-white rounded-full text-sm font-medium hover:bg-blue-500 shadow-lg shadow-blue-600/20 transition-colors flex items-center gap-2"
-            aria-label="Export Image"
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">Export</span>
-          </button>
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Format Selection (PNG / JPG Selection) */}
+            <div className="flex items-center bg-gray-100 p-0.5 rounded-lg border border-gray-200">
+              <button
+                onClick={() => setExportFormat("png")}
+                className={`px-2 py-1 text-[10px] sm:text-xs font-semibold rounded transition-all ${
+                  exportFormat === "png"
+                    ? "bg-white text-gray-900 shadow-sm font-bold"
+                    : "text-gray-500 hover:text-gray-900"
+                }`}
+              >
+                PNG
+              </button>
+              <button
+                onClick={() => setExportFormat("jpg")}
+                className={`px-2 py-1 text-[10px] sm:text-xs font-semibold rounded transition-all ${
+                  exportFormat === "jpg"
+                    ? "bg-white text-gray-900 shadow-sm font-bold"
+                    : "text-gray-500 hover:text-gray-900"
+                }`}
+              >
+                JPG
+              </button>
+            </div>
+
+            <button
+              onClick={handleExport}
+              className="px-2.5 py-1.5 bg-blue-600 text-white rounded-lg text-[11px] sm:text-xs font-semibold hover:bg-blue-500 shadow-md transition-all flex items-center gap-1 cursor-pointer"
+              title={`${exportFormat.toUpperCase()} (${canvasSize}x${canvasSize}) をエクスポート`}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">エクスポート</span>
+              <span>{canvasSize}px</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -888,8 +992,8 @@ export default function App() {
             {/* The actual Konva canvas */}
             <Stage
               ref={stageRef}
-              width={LOGICAL_SIZE * scale}
-              height={LOGICAL_SIZE * scale}
+              width={canvasSize * scale}
+              height={canvasSize * scale}
               scaleX={scale}
               scaleY={scale}
               onMouseDown={checkDeselect}
@@ -907,6 +1011,7 @@ export default function App() {
                       imgs[i] = newAttrs;
                       setImages(imgs);
                     }}
+                    logicalSize={canvasSize}
                   />
                 ))}
               </Layer>
@@ -918,24 +1023,24 @@ export default function App() {
                 <svg
                   width="100%"
                   height="100%"
-                  viewBox={`0 0 ${LOGICAL_SIZE} ${LOGICAL_SIZE}`}
+                  viewBox={`0 0 ${canvasSize} ${canvasSize}`}
                   preserveAspectRatio="none"
                   xmlns="http://www.w3.org/2000/svg"
                 >
                   <defs>
                     <pattern
                       id="smallGrid"
-                      width={LOGICAL_SIZE / 16}
-                      height={LOGICAL_SIZE / 16}
+                      width={canvasSize / 16}
+                      height={canvasSize / 16}
                       patternUnits="userSpaceOnUse"
                     >
                       <rect
-                        width={LOGICAL_SIZE / 16}
-                        height={LOGICAL_SIZE / 16}
+                        width={canvasSize / 16}
+                        height={canvasSize / 16}
                         fill="none"
                       />
                       <path
-                        d={`M ${LOGICAL_SIZE / 16} 0 L 0 0 0 ${LOGICAL_SIZE / 16}`}
+                        d={`M ${canvasSize / 16} 0 L 0 0 0 ${canvasSize / 16}`}
                         fill="none"
                         stroke="#a0b3b0"
                         strokeWidth="2"
@@ -943,17 +1048,17 @@ export default function App() {
                     </pattern>
                     <pattern
                       id="grid"
-                      width={LOGICAL_SIZE / 4}
-                      height={LOGICAL_SIZE / 4}
+                      width={canvasSize / 4}
+                      height={canvasSize / 4}
                       patternUnits="userSpaceOnUse"
                     >
                       <rect
-                        width={LOGICAL_SIZE / 4}
-                        height={LOGICAL_SIZE / 4}
+                        width={canvasSize / 4}
+                        height={canvasSize / 4}
                         fill="url(#smallGrid)"
                       />
                       <path
-                        d={`M ${LOGICAL_SIZE / 4} 0 L 0 0 0 ${LOGICAL_SIZE / 4}`}
+                        d={`M ${canvasSize / 4} 0 L 0 0 0 ${canvasSize / 4}`}
                         fill="none"
                         stroke="#3b82f6"
                         strokeWidth="4"
@@ -964,7 +1069,7 @@ export default function App() {
                   <rect width="100%" height="100%" fill="url(#grid)" />
                   {/* Padding Overlay */}
                   <path
-                    d={`M 0 0 H ${LOGICAL_SIZE} V ${LOGICAL_SIZE} H 0 Z M ${LOGICAL_SIZE * 0.025} ${LOGICAL_SIZE * 0.025} V ${LOGICAL_SIZE - LOGICAL_SIZE * 0.025} H ${LOGICAL_SIZE - LOGICAL_SIZE * 0.025} V ${LOGICAL_SIZE * 0.025} Z`}
+                    d={`M 0 0 H ${canvasSize} V ${canvasSize} H 0 Z M ${canvasSize * 0.025} ${canvasSize * 0.025} V ${canvasSize - canvasSize * 0.025} H ${canvasSize - canvasSize * 0.025} V ${canvasSize * 0.025} Z`}
                     fill="rgba(128, 128, 128, 0.3)"
                     fillRule="evenodd"
                   />
